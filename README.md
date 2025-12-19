@@ -1,4 +1,4 @@
-# 🌬️ Wind Tunnel Field Viewer
+# Wind Tunnel Field Viewer
 
 Interactive Python **Dash web application**  for visualization and download of **mean concentration and velocity fields** from wind-tunnel experiments.
 
