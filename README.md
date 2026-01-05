@@ -10,7 +10,7 @@ Interactive Python **Dash web application**  for visualization and download of *
   - **mean concentration fields** (`C`, `C* std`)
   - **mean velocity fields** (`U/Uref`, `W/Uref`, `TKE/Uref²`)
 - Automatic detection of:
-  - x–y and x–z measurement planes
+  - x–z measurement planes
   - appropriate axis limits and aspect ratio
 - Support for **East / West wind directions**
 - Automatic pairing of concentration and velocity datasets by measurement position (`y=…mm`)
