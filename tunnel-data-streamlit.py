@@ -1,10 +1,12 @@
+# Run it in terminal as: > streamlit run tunnel-data-streamlit.py
+# Stop it in terminal as: > Ctrl + C
+
 import os
 import re
 import io
 import zipfile
 import pandas as pd
-import dash
-from dash import dcc, html, Input, Output, State
+import streamlit as st
 import plotly.graph_objects as go
 
 # =====================================================
@@ -37,7 +39,9 @@ DIR_LABELS = {
 # =====================================================
 # TEC PLOT PARSER
 # =====================================================
+@st.cache_data(show_spinner=False)
 def load_tecplot(path: str, columns: list[str]) -> pd.DataFrame:
+    # NOTE: caching uses file path as key; if files change often, consider adding mtime to the cache key.
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         lines = f.readlines()
 
@@ -63,16 +67,21 @@ def extract_y_key(fname: str) -> str | None:
     m = Y_PATTERN.search(fname)
     return f"y={m.group(1)}mm" if m else None
 
+@st.cache_data(show_spinner=False)
 def build_file_map(direction: str):
     mapping = {}
     for kind in ["concentration", "velocity"]:
         d = os.path.join(BASE_DIR, kind, direction)
+        if not os.path.isdir(d):
+            continue
         for f in os.listdir(d):
             if not f.lower().endswith((".dat", ".txt")):
                 continue
             ykey = extract_y_key(f)
             if ykey:
                 mapping.setdefault(ykey, {})[kind] = os.path.join(d, f)
+
+    # keep only complete pairs
     return {k: v for k, v in mapping.items()
             if "concentration" in v and "velocity" in v}
 
@@ -95,10 +104,10 @@ def make_field_plot(df: pd.DataFrame, variable: str, title: str) -> go.Figure:
         if variable in ["W_Uref", "uw_Uref2", "Corr"]:
             return "RdBu_r"
         if variable in ["U_Uref"]:
-            return "RdBu_r"  #"Cividis"
+            return "RdBu_r"
         if variable in ["TKE_Uref2"]:
-            return "RdBu_r" #"Magma"
-        return "RdBu_r" #"Viridis"
+            return "RdBu_r"
+        return "RdBu_r"
 
     fig = go.Figure()
     nx, ny, nz = df["x"].nunique(), df["y"].nunique(), df["z"].nunique()
@@ -168,153 +177,12 @@ def make_field_plot(df: pd.DataFrame, variable: str, title: str) -> go.Figure:
         margin=dict(l=60, r=20, t=50, b=50),
         autosize=False
     )
-
     return fig
 
 # =====================================================
-# DASH APP
+# ZIP BUILDER
 # =====================================================
-app = dash.Dash(__name__)
-
-app.layout = html.Div(
-    style={"width": "1200px", "margin": "auto"},
-    children=[
-        html.H2("Tunelová měření - pole průměrných koncentrací a rychlostí"),
-
-        html.Label("Směr větru"),
-        dcc.RadioItems(
-            id="dir-radio",
-            options=[
-                {"label": label, "value": key}
-                for key, label in DIR_LABELS.items()
-            ],
-            value="East",
-            inline=True
-        ),
-
-        html.Br(),
-
-        html.Label("Měřicí pozice"),
-        dcc.Dropdown(id="pos-dropdown", clearable=False),
-
-        html.Br(),
-
-        html.Div(
-            style={"display": "flex", "gap": "20px"},
-            children=[
-                html.Div(
-                    style={"width": "50%"},
-                    children=[
-                        html.H4("Koncentrace"),
-                        dcc.Dropdown(
-                            id="conc-var",
-                            options=[
-                                {"label": "C*", "value": "C"},
-                                {"label": "C* std", "value": "C_std"},
-                            ],
-                            value="C",
-                            clearable=False
-                        ),
-                        dcc.Graph(
-                            id="conc-plot",
-                            style={"height": f"{FIG_HEIGHT}px"},
-                            config={"responsive": True}
-                        )
-                    ]
-                ),
-                html.Div(
-                    style={"width": "50%"},
-                    children=[
-                        html.H4("Rychlost"),
-                        dcc.Dropdown(
-                            id="vel-var",
-                            options=[
-                                {"label": "U/Uref", "value": "U_Uref"},
-                                {"label": "W/Uref", "value": "W_Uref"},
-                                {"label": "TKE/Uref²", "value": "TKE_Uref2"},
-                            ],
-                            value="U_Uref",
-                            clearable=False
-                        ),
-                        dcc.Graph(
-                            id="vel-plot",
-                            style={"height": f"{FIG_HEIGHT}px"},
-                            config={"responsive": True}
-                        )
-                    ]
-                )
-            ]
-        ),
-
-        html.Br(),
-
-        html.Button(id="download-all-btn"),
-        dcc.Download(id="download-all"),
-
-    ]
-)
-
-# =====================================================
-# CALLBACKS
-# =====================================================
-@app.callback(
-    Output("pos-dropdown", "options"),
-    Output("pos-dropdown", "value"),
-    Input("dir-radio", "value")
-)
-def update_positions(direction):
-    fmap = build_file_map(direction)
-    keys = sorted(fmap.keys())
-    return ([{"label": k, "value": k} for k in keys],
-            keys[0] if keys else None)
-
-@app.callback(
-    Output("conc-plot", "figure"),
-    Output("vel-plot", "figure"),
-    Input("dir-radio", "value"),
-    Input("pos-dropdown", "value"),
-    Input("conc-var", "value"),
-    Input("vel-var", "value")
-)
-def update_plots(direction, pos_key, conc_var, vel_var):
-    if pos_key is None:
-        return go.Figure(), go.Figure()
-
-    fmap = build_file_map(direction)
-    dfc = load_tecplot(fmap[pos_key]["concentration"], CONC_COLS)
-    dfv = load_tecplot(fmap[pos_key]["velocity"], VEL_COLS)
-
-    cz_dir = DIR_LABELS.get(direction, direction)
-
-    return (
-        make_field_plot(
-            dfc,
-            conc_var,
-            f"{cz_dir} - koncentrace ({pos_key})"
-        ),
-        make_field_plot(
-            dfv,
-            vel_var,
-            f"{cz_dir} - rychlost ({pos_key})"
-        )
-    )
-
-@app.callback(
-    Output("download-all-btn", "children"),
-    Input("dir-radio", "value")
-)
-def update_download_button_label(direction):
-    cz_dir = DIR_LABELS.get(direction, direction)
-    return f"Stáhnout data - {cz_dir} (ZIP)"
-
-@app.callback(
-    Output("download-all", "data"),
-    Input("download-all-btn", "n_clicks"),
-    State("dir-radio", "value"),
-    prevent_initial_call=True
-)
-
-def download_all_data(n_clicks, direction):
+def build_zip_bytes(direction: str) -> bytes:
     fmap = build_file_map(direction)
     buffer = io.BytesIO()
 
@@ -325,11 +193,75 @@ def download_all_data(n_clicks, direction):
                 zf.write(path, arcname=arcname)
 
     buffer.seek(0)
-    return dcc.send_bytes(buffer.read(),
-                          filename=f"{direction}_all_data.zip")
+    return buffer.read()
 
 # =====================================================
-# RUN
+# STREAMLIT UI
 # =====================================================
-if __name__ == "__main__":
-    app.run(debug=True)
+st.set_page_config(page_title="Tunelová měření", layout="wide")
+
+st.title("Tunelová měření - pole průměrných koncentrací a rychlostí")
+
+# controls
+direction = st.radio(
+    "Směr větru",
+    options=list(DIR_LABELS.keys()),
+    format_func=lambda k: DIR_LABELS.get(k, k),
+    horizontal=True
+)
+
+fmap = build_file_map(direction)
+keys = sorted(fmap.keys())
+
+if not keys:
+    st.error(f"Nebyly nalezeny páry souborů pro směr: {direction} (čekám data v {BASE_DIR}/...)")
+    st.stop()
+
+pos_key = st.selectbox("Měřicí pozice", options=keys)
+
+col1, col2 = st.columns(2, gap="large")
+
+with col1:
+    st.subheader("Koncentrace")
+    conc_var = st.selectbox(
+        "Proměnná (koncentrace)",
+        options=["C", "C_std"],
+        format_func=lambda v: {"C": "C*", "C_std": "C* std"}.get(v, v),
+        key="conc_var"
+    )
+
+with col2:
+    st.subheader("Rychlost")
+    vel_var = st.selectbox(
+        "Proměnná (rychlost)",
+        options=["U_Uref", "W_Uref", "TKE_Uref2"],
+        format_func=lambda v: {"U_Uref": "U/Uref", "W_Uref": "W/Uref", "TKE_Uref2": "TKE/Uref²"}.get(v, v),
+        key="vel_var"
+    )
+
+# load + plot
+dfc = load_tecplot(fmap[pos_key]["concentration"], CONC_COLS)
+dfv = load_tecplot(fmap[pos_key]["velocity"], VEL_COLS)
+
+cz_dir = DIR_LABELS.get(direction, direction)
+
+fig_c = make_field_plot(dfc, conc_var, f"{cz_dir} - koncentrace ({pos_key})")
+fig_v = make_field_plot(dfv, vel_var, f"{cz_dir} - rychlost ({pos_key})")
+
+col1, col2 = st.columns(2, gap="large")
+with col1:
+    st.plotly_chart(fig_c, use_container_width=True)
+with col2:
+    st.plotly_chart(fig_v, use_container_width=True)
+
+st.divider()
+
+zip_label = f"Stáhnout data - {cz_dir} (ZIP)"
+zip_bytes = build_zip_bytes(direction)
+
+st.download_button(
+    label=zip_label,
+    data=zip_bytes,
+    file_name=f"{direction}_all_data.zip",
+    mime="application/zip"
+)
