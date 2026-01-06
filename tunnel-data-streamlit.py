@@ -202,6 +202,30 @@ st.set_page_config(page_title="Tunelová měření", layout="wide")
 
 st.title("Tunelová měření - pole průměrných koncentrací a rychlostí")
 
+st.markdown(
+    """
+    Text text text ... (popis experimentu a dat).
+        
+    """
+)
+
+st.info(
+    "Zobrazovaná pole jsou prostorové průměry na základě dostupných tunelových měření. "
+    "Aplikace neprovádí interpolaci mimo rozsah dat."
+)
+
+st.info(
+    "Pro stažení kompletních dat ve formátu ZIP použijte tlačítko v dolní části obrazovky."
+)
+
+st.divider()
+
+st.markdown(
+    """
+    **Vyberte směr větru, měřicí pozici (*y = ... mm*) a zobrazovanou veličinu**
+
+    """
+)
 # controls
 direction = st.radio(
     "Směr větru",
