@@ -215,14 +215,14 @@ st.info(
 )
 
 st.info(
-    "Pro stažení kompletních dat ve formátu ZIP použijte tlačítko v dolní části obrazovky."
+    "Pro stažení vybraných dat ve formátu ZIP použijte tlačítko v dolní části obrazovky."
 )
 
 st.divider()
 
 st.markdown(
     """
-    **Vyberte směr větru, měřicí pozici (*y = ... mm*) a zobrazovanou veličinu**
+    **Vyberte směr větru, měřicí pozici (*y = ... mm*) a zobrazovanou veličinu.**
 
     """
 )
@@ -279,6 +279,8 @@ with col2:
     st.plotly_chart(fig_v, use_container_width=True)
 
 st.divider()
+
+st.success("Data ke stažení zde: ⬇️")
 
 zip_label = f"Stáhnout data - {cz_dir} (ZIP)"
 zip_bytes = build_zip_bytes(direction)
