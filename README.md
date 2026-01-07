@@ -29,6 +29,7 @@ Interactive Python **Dash web application**  for visualization and download of *
 
 - Python ≥ 3.9  
 - Dash  
+- Streamlit
 - Pandas  
 - Plotly  
 
@@ -37,21 +38,29 @@ Interactive Python **Dash web application**  for visualization and download of *
 ## 🧰 Installation
 
 ```bash
-pip install dash pandas plotly
+pip install dash streamlit pandas plotly
 ```
 
 ---
 
 ## 🧪 Running
+**1) Dash**
 
-From the repository root directory:
+Run from the repository root directory:
 ```bash
 python tunnel-data-dash.py
 ```
 
-Open the app in a web browser:
+and then open the app in a web browser:
 ```bash
 http://localhost:8050/
+```
+
+**2) Streamlit**
+
+Or, if using streamlit variant, run from the repository directory:
+```bash
+streamlit run tunnel-data-streamlit.py
 ```
 
 ---

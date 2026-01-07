@@ -220,9 +220,9 @@ st.info(
 
 st.divider()
 
-st.markdown(
+st.subheader(
     """
-    **Vyberte směr větru, měřicí pozici (*y = ... mm*) a zobrazovanou veličinu.**
+    **Vyberte směr větru, měřicí pozici (*y = ... mm*) a zobrazovanou veličinu:**
 
     """
 )
@@ -274,9 +274,9 @@ fig_v = make_field_plot(dfv, vel_var, f"{cz_dir} - rychlost ({pos_key})")
 
 col1, col2 = st.columns(2, gap="large")
 with col1:
-    st.plotly_chart(fig_c, use_container_width=True)
+    st.plotly_chart(fig_c, width="stretch")
 with col2:
-    st.plotly_chart(fig_v, use_container_width=True)
+    st.plotly_chart(fig_v, width="stretch")
 
 st.divider()
 
