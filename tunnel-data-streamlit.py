@@ -1,5 +1,5 @@
-# Run it in terminal as: > streamlit run tunnel-data-streamlit.py
-# Stop it in terminal as: > Ctrl + C
+# Run it in terminal as:  streamlit run tunnel-data-streamlit.py
+# Stop it in terminal as: Ctrl + C
 
 import os
 import re
@@ -14,6 +14,19 @@ import plotly.graph_objects as go
 # =====================================================
 BASE_DIR = "data"
 FIG_HEIGHT = 500
+
+# Dataset layout assumed:
+# data/
+#   base/
+#     concentration/<Direction>/*.dat|*.txt
+#     velocity/<Direction>/*.dat|*.txt
+#   trees/
+#     concentration/West/*.dat|*.txt
+#     (velocity may be missing)
+SCENARIOS = {
+    "Bez stromů": "notrees",
+    "Se stromy": "trees",
+}
 
 # =====================================================
 # COLUMN DEFINITIONS
@@ -41,7 +54,6 @@ DIR_LABELS = {
 # =====================================================
 @st.cache_data(show_spinner=False)
 def load_tecplot(path: str, columns: list[str]) -> pd.DataFrame:
-    # NOTE: caching uses file path as key; if files change often, consider adding mtime to the cache key.
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         lines = f.readlines()
 
@@ -68,12 +80,20 @@ def extract_y_key(fname: str) -> str | None:
     return f"y={m.group(1)}mm" if m else None
 
 @st.cache_data(show_spinner=False)
-def build_file_map(direction: str):
-    mapping = {}
+def build_file_map(direction: str, scenario_key: str) -> dict[str, dict[str, str]]:
+    """
+    Returns:
+      { "y=..mm": { "concentration": "/path/to/file", "velocity": "/path/to/file" } }
+
+    Note: some y-keys may have only concentration (e.g. trees scenario).
+    """
+    mapping: dict[str, dict[str, str]] = {}
+
     for kind in ["concentration", "velocity"]:
-        d = os.path.join(BASE_DIR, kind, direction)
+        d = os.path.join(BASE_DIR, scenario_key, kind, direction)
         if not os.path.isdir(d):
             continue
+
         for f in os.listdir(d):
             if not f.lower().endswith((".dat", ".txt")):
                 continue
@@ -81,9 +101,7 @@ def build_file_map(direction: str):
             if ykey:
                 mapping.setdefault(ykey, {})[kind] = os.path.join(d, f)
 
-    # keep only complete pairs
-    return {k: v for k, v in mapping.items()
-            if "concentration" in v and "velocity" in v}
+    return mapping
 
 # =====================================================
 # AXIS LOCK
@@ -101,12 +119,7 @@ def lock_axes(fig, xvals, yvals):
 # =====================================================
 def make_field_plot(df: pd.DataFrame, variable: str, title: str) -> go.Figure:
     def choose_colormap(variable):
-        if variable in ["W_Uref", "uw_Uref2", "Corr"]:
-            return "RdBu_r"
-        if variable in ["U_Uref"]:
-            return "RdBu_r"
-        if variable in ["TKE_Uref2"]:
-            return "RdBu_r"
+        # everything currently RdBu_r
         return "RdBu_r"
 
     fig = go.Figure()
@@ -182,8 +195,8 @@ def make_field_plot(df: pd.DataFrame, variable: str, title: str) -> go.Figure:
 # =====================================================
 # ZIP BUILDER
 # =====================================================
-def build_zip_bytes(direction: str) -> bytes:
-    fmap = build_file_map(direction)
+def build_zip_bytes(direction: str, scenario_key: str) -> bytes:
+    fmap = build_file_map(direction, scenario_key)
     buffer = io.BytesIO()
 
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -205,7 +218,6 @@ st.title("Tunelová měření - pole průměrných koncentrací a rychlostí")
 st.markdown(
     """
     Text text text ... (popis experimentu a dat).
-        
     """
 )
 
@@ -220,13 +232,9 @@ st.info(
 
 st.divider()
 
-st.subheader(
-    """
-    **Vyberte směr větru, měřicí pozici (*y = ... mm*) a zobrazovanou veličinu:**
+st.markdown("**Vyberte směr větru, scénář, měřicí pozici (*y = ... mm*) a zobrazovanou veličinu:**")
 
-    """
-)
-# controls
+# ---- controls row (direction + scenario)
 direction = st.radio(
     "Směr větru",
     options=list(DIR_LABELS.keys()),
@@ -234,18 +242,37 @@ direction = st.radio(
     horizontal=True
 )
 
-fmap = build_file_map(direction)
+# Scenario selection:
+# If trees exist only for West, force "Bez stromů" for East.
+if direction != "West":
+    scenario_label = "Bez stromů"
+    scenario_key = SCENARIOS[scenario_label]
+    st.warning("Pro tento směr je dostupný pouze scénář bez stromů.")
+else:
+    scenario_label = st.radio(
+        "Scénář",
+        options=list(SCENARIOS.keys()),
+        horizontal=True
+    )
+    scenario_key = SCENARIOS[scenario_label]
+
+# ---- file map for chosen direction+scenario
+fmap = build_file_map(direction, scenario_key)
 keys = sorted(fmap.keys())
 
 if not keys:
-    st.error(f"Nebyly nalezeny páry souborů pro směr: {direction} (čekám data v {BASE_DIR}/...)")
+    st.error(
+        f"Nebyly nalezeny soubory pro: směr={direction}, scénář={scenario_label}. "
+        f"Čekám data v {BASE_DIR}/{scenario_key}/..."
+    )
     st.stop()
 
 pos_key = st.selectbox("Měřicí pozice", options=keys)
 
-col1, col2 = st.columns(2, gap="large")
+# ---- variable selectors
+colA, colB = st.columns(2, gap="large")
 
-with col1:
+with colA:
     st.subheader("Koncentrace")
     conc_var = st.selectbox(
         "Proměnná (koncentrace)",
@@ -254,7 +281,7 @@ with col1:
         key="conc_var"
     )
 
-with col2:
+with colB:
     st.subheader("Rychlost")
     vel_var = st.selectbox(
         "Proměnná (rychlost)",
@@ -263,31 +290,56 @@ with col2:
         key="vel_var"
     )
 
-# load + plot
-dfc = load_tecplot(fmap[pos_key]["concentration"], CONC_COLS)
-dfv = load_tecplot(fmap[pos_key]["velocity"], VEL_COLS)
+# ---- load and plot (conditional for velocity)
+paths = fmap[pos_key]
+has_conc = "concentration" in paths
+has_vel = "velocity" in paths
 
 cz_dir = DIR_LABELS.get(direction, direction)
 
-fig_c = make_field_plot(dfc, conc_var, f"{cz_dir} - koncentrace ({pos_key})")
-fig_v = make_field_plot(dfv, vel_var, f"{cz_dir} - rychlost ({pos_key})")
+fig_c = go.Figure()
+fig_v = None
 
+if has_conc:
+    dfc = load_tecplot(paths["concentration"], CONC_COLS)
+    fig_c = make_field_plot(
+        dfc,
+        conc_var,
+        f"{cz_dir} / {scenario_label} - koncentrace ({pos_key})"
+    )
+else:
+    st.error("Pro vybranou pozici chybí soubor koncentrace.")
+
+if has_vel:
+    dfv = load_tecplot(paths["velocity"], VEL_COLS)
+    fig_v = make_field_plot(
+        dfv,
+        vel_var,
+        f"{cz_dir} / {scenario_label} - rychlost ({pos_key})"
+    )
+
+# ---- plots
 col1, col2 = st.columns(2, gap="large")
 with col1:
     st.plotly_chart(fig_c, width="stretch")
+
 with col2:
-    st.plotly_chart(fig_v, width="stretch")
+    if fig_v is None:
+        st.warning("Pro tento scénář nejsou k dispozici data rychlosti.")
+    else:
+        st.plotly_chart(fig_v, width="stretch")
 
 st.divider()
 
+# ---- download section
 st.success("Data ke stažení zde: ⬇️")
 
-zip_label = f"Stáhnout data - {cz_dir} (ZIP)"
-zip_bytes = build_zip_bytes(direction)
+zip_label = f"Stáhnout data - {cz_dir} / {scenario_label} (ZIP)"
+zip_bytes = build_zip_bytes(direction, scenario_key)
 
 st.download_button(
     label=zip_label,
     data=zip_bytes,
-    file_name=f"{direction}_all_data.zip",
+    file_name=f"{direction}_{scenario_key}_all_data.zip",
     mime="application/zip"
 )
