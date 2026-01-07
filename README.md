@@ -13,6 +13,7 @@ Interactive Python **Dash web application**  for visualization and download of *
   - x–z measurement planes
   - appropriate axis limits and aspect ratio
 - Support for **East / West wind directions**
+- Scenarios **with / without trees**
 - Automatic pairing of concentration and velocity datasets by measurement position (`y=…mm`)
 - One-click download of all data for the selected wind direction (ZIP archive)
 - Czech user interface with internally consistent English dataset naming
