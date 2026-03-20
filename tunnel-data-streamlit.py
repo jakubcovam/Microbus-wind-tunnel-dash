@@ -315,7 +315,9 @@ def build_zip_bytes(direction: str, scenario_key: str, plane: str) -> bytes:
 # =====================================================
 st.set_page_config(page_title="Tunelová měření", layout="wide")
 
-st.title("Tunelová měření – pole průměrných koncentrací a rychlostí")
+st.title("Tunelová měření - disperse polutantu a rychlostní pole v modelu Legerovy ulice (Praha)")
+
+st.divider()
 
 col_text, col_img = st.columns([3, 2], gap="large")
 
@@ -328,6 +330,12 @@ with col_text:
         Měření byla provedena v rámci projektu [Microbus](https://www.microbus.cz/) financováném 
         Technologickou agenturou ČR v rámci programu Prostředí pro život 2 v letech 2025–2027.
 
+        Databáze slouží jako referenční sada experimentálních dat pro validaci a verifikaci numerických modelů proudění 
+        a disperse polutantů v městské zástavbě. V rámci projektu Microbus byla využita k validaci modelu PALM 
+        (Parallelized Large-Eddy Simulation model). Data jsou volně dostupná i pro další výzkumné týmy - například pro 
+        validaci jiných CFD nástrojů, testování parametrizací, srovnávací studie nebo pro výukové účely v oblasti 
+        mikrometeorologického modelování.
+        
         **Geometrie a souřadnicový systém**
 
         Souřadnicový systém (x, y, z) je vztažen k modelu ulice. Vertikální roviny (x–z) jsou kolmé na osu zdroje (y),
@@ -364,12 +372,6 @@ with col_img:
                 "modře: vertikální roviny (x–z) s polohou y [mm], "
                 "zeleně: horizontální rovina (x–y). "
                 "Šipky označují simulované směry větru.")
-
-st.info(
-    "Zobrazovaná pole jsou prostorové průměry na základě dostupných tunelových měření. "
-    "Aplikace neprovádí interpolaci mimo rozsah dat."
-)
-st.info("Pro stažení dat zvoleného nastavení ve formátu ZIP použijte tlačítko v levé části obrazovky.")
 
 st.divider()
 
@@ -548,3 +550,9 @@ with col2:
         st.warning("Pro tento scénář/pozici nejsou k dispozici data rychlosti.")
     else:
         st.plotly_chart(fig_v)
+
+st.info(
+    "Zobrazovaná pole jsou prostorové průměry na základě dostupných tunelových měření."
+)
+
+st.info("Pro stažení dat zvoleného nastavení ve formátu ZIP použijte tlačítko v levé části obrazovky.")
