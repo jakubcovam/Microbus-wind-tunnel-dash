@@ -5,6 +5,7 @@ import os
 import re
 import io
 import zipfile
+import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
@@ -15,56 +16,60 @@ import plotly.graph_objects as go
 BASE_DIR = "data"
 FIG_HEIGHT = 500
 
-# Dataset layout assumed:
-# data/
-#   base/
-#     concentration/<Direction>/*.dat|*.txt
-#     velocity/<Direction>/*.dat|*.txt
-#   trees/
-#     concentration/West/*.dat|*.txt
-#     (velocity may be missing)
 SCENARIOS = {
     "Bez stromů": "notrees",
-    "Se stromy": "trees",
+    "Se stromy":  "trees",
 }
-
-# =====================================================
-# COLUMN DEFINITIONS
-# =====================================================
-CONC_COLS = ["x", "y", "z", "x_B", "y_B", "z_B", "C", "C_std"]
-
-VEL_COLS = [
-    "x", "y", "z",
-    "x_H", "y_H", "z_H",
-    "U", "W", "Length",
-    "U_Uref", "W_Uref",
-    "Std_U_Uref", "Std_W_Uref",
-    "TKE_Uref2", "uw_Uref2",
-    "Corr", "Skew_U", "Skew_W",
-    "Kurt_U", "Kurt_W", "Length_Uref"
-]
 
 DIR_LABELS = {
     "East": "Východní vítr",
     "West": "Západní vítr",
 }
 
+PLANE_LABELS = {
+    "vertical":   "Vertikální roviny (x–z)",
+    "horizontal": "Horizontální rovina (x–y)",
+}
+
 # =====================================================
-# COLORSCALE & COLORBAR LABEL DEFINITIONS
+# COLUMN DEFINITIONS
 # =====================================================
-# Maps variable name → (colorscale, colorbar label, diverging)
+CONC_COLS_FFID = ["x", "y", "z", "x_B", "y_B", "z_B", "C", "C_std"]
+CONC_COLS_PIV  = ["x", "y", "z", "C"]
+
+VEL_COLS_VERTICAL = [
+    "x", "y", "z", "x_H", "y_H", "z_H",
+    "U", "W", "Length",
+    "U_Uref", "W_Uref",
+    "Std_U_Uref", "Std_W_Uref",
+    "TKE_Uref2", "uw_Uref2",
+    "Corr", "Skew_U", "Skew_W", "Kurt_U", "Kurt_W", "Length_Uref",
+]
+
+# Horizontal plane: V component instead of W
+VEL_COLS_HORIZONTAL = [
+    "x", "y", "z", "x_H", "y_H", "z_H",
+    "U", "V", "Length",
+    "U_Uref", "V_Uref",
+    "Std_U_Uref", "Std_V_Uref",
+    "TKE_Uref2", "uv_Uref2",
+    "Corr", "Skew_U", "Skew_W", "Kurt_U", "Kurt_W", "Length_Uref",
+]
+
+# =====================================================
+# COLORSCALE & COLORBAR DEFINITIONS
+# =====================================================
 VARIABLE_DISPLAY = {
-    "C":         ("Viridis",  "C* [–]",        False),
-    "C_std":     ("Viridis",  "C* std [–]",    False),
-    "U_Uref":    ("RdBu_r",   "U / U_ref [–]", True),
-    "W_Uref":    ("RdBu_r",   "W / U_ref [–]", True),
-    "TKE_Uref2": ("Plasma",   "TKE / U_ref² [–]", False),
+    "C":         ("Viridis", "C* [–]",          False),
+    "C_std":     ("Viridis", "C* std [–]",       False),
+    "U_Uref":    ("RdBu_r",  "U / U_ref [–]",    True),
+    "W_Uref":    ("RdBu_r",  "W / U_ref [–]",    True),
+    "V_Uref":    ("RdBu_r",  "V / U_ref [–]",    True),
+    "TKE_Uref2": ("Plasma",  "TKE / U_ref² [–]", False),
 }
 
 def get_variable_style(variable: str) -> tuple[str, str, bool]:
-    """Return (colorscale, colorbar_label, is_diverging) for a variable."""
     return VARIABLE_DISPLAY.get(variable, ("Viridis", variable, False))
-
 
 def make_colorbar_kwargs(label: str) -> dict:
     return dict(
@@ -75,10 +80,11 @@ def make_colorbar_kwargs(label: str) -> dict:
     )
 
 # =====================================================
-# TEC PLOT PARSER
+# PARSERS
 # =====================================================
 @st.cache_data(show_spinner=False)
-def load_tecplot(path: str, columns: list[str]) -> pd.DataFrame:
+def load_tecplot_point(path: str, columns: list[str]) -> pd.DataFrame:
+    """Load Tecplot POINT format (FFID concentration + velocity files)."""
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         lines = f.readlines()
 
@@ -86,155 +92,197 @@ def load_tecplot(path: str, columns: list[str]) -> pd.DataFrame:
         i for i, line in enumerate(lines)
         if line.strip() and (line.strip()[0].isdigit() or line.strip()[0] == "-")
     )
-
-    df = pd.read_csv(path, sep=r"\s+", skiprows=data_start, header=None)
+    df = pd.read_csv(path, sep=r"\s+", skiprows=data_start, header=None,
+                     engine="python")
+    df = df.iloc[:, :len(columns)]
     df.columns = columns
-
     for c in columns:
         df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df.dropna(subset=["x", "y", "z"])
 
+
+@st.cache_data(show_spinner=False)
+def load_tecplot_block(path: str, columns: list[str]) -> pd.DataFrame:
+    """
+    Load Tecplot BLOCK format (PIV concentration files).
+    All numeric values are read sequentially; the first npoints*ncols
+    values are then reshaped column-by-column as Tecplot BLOCK specifies.
+    """
+    tokens: list[float] = []
+    n_points: int | None = None
+
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if n_points is None:
+                m = re.search(r"I\s*=\s*(\d+).*?J\s*=\s*(\d+)", line, re.IGNORECASE)
+                if m:
+                    n_points = int(m.group(1)) * int(m.group(2))
+            for tok in line.split():
+                try:
+                    tokens.append(float(tok))
+                except ValueError:
+                    pass
+            if n_points and len(tokens) >= n_points * len(columns):
+                break
+
+    if n_points is None or len(tokens) < n_points * len(columns):
+        raise ValueError(f"Nelze načíst BLOCK soubor: {path}")
+
+    arr = np.array(tokens[: n_points * len(columns)]).reshape(
+        len(columns), n_points
+    ).T
+    df = pd.DataFrame(arr, columns=columns)
     return df.dropna(subset=["x", "y", "z"])
 
 # =====================================================
-# FILE PAIRING BY y=XXmm
+# FILE MAP BUILDER
 # =====================================================
 Y_PATTERN = re.compile(r"y\s*=\s*([-+]?\d+\.?\d*)\s*mm", re.IGNORECASE)
+Z_PATTERN = re.compile(r"z\s*=\s*([-+]?\d+\.?\d*)\s*mm", re.IGNORECASE)
 
-def extract_y_key(fname: str) -> str | None:
-    m = Y_PATTERN.search(fname)
-    return f"y={m.group(1)}mm" if m else None
+def _extract_key(fname: str, pattern: re.Pattern, prefix: str) -> str | None:
+    m = pattern.search(fname)
+    return f"{prefix}={m.group(1)}mm" if m else None
+
 
 @st.cache_data(show_spinner=False)
-def build_file_map(direction: str, scenario_key: str) -> dict[str, dict[str, str]]:
+def build_file_map(direction: str, scenario_key: str, plane: str) -> dict[str, dict]:
     """
-    Returns:
-      { "y=..mm": { "concentration": "/path/to/file", "velocity": "/path/to/file" } }
-
-    Note: some y-keys may have only concentration (e.g. trees scenario).
+    Returns dict keyed by position label with sub-keys:
+      'ffid'       → path  (FFID concentration)
+      'piv'        → path  (PIV concentration, vertical only)
+      'velocity'   → path
+      'vel_format' → 'vertical' | 'horizontal'
     """
-    mapping: dict[str, dict[str, str]] = {}
+    mapping: dict[str, dict] = {}
 
-    for kind in ["concentration", "velocity"]:
-        d = os.path.join(BASE_DIR, scenario_key, kind, direction)
-        if not os.path.isdir(d):
-            continue
+    if plane == "vertical":
+        # FFID concentration
+        d = os.path.join(BASE_DIR, scenario_key, "concentration", direction)
+        if os.path.isdir(d):
+            for f in os.listdir(d):
+                if not f.lower().endswith((".dat", ".txt")):
+                    continue
+                key = _extract_key(f, Y_PATTERN, "y")
+                if key:
+                    mapping.setdefault(key, {})["ffid"] = os.path.join(d, f)
 
-        for f in os.listdir(d):
-            if not f.lower().endswith((".dat", ".txt")):
-                continue
-            ykey = extract_y_key(f)
-            if ykey:
-                mapping.setdefault(ykey, {})[kind] = os.path.join(d, f)
+        # PIV concentration
+        piv_dir = os.path.join(BASE_DIR, scenario_key, "concentration", direction, "PIV")
+        if os.path.isdir(piv_dir):
+            for f in os.listdir(piv_dir):
+                if not f.lower().endswith((".dat", ".txt")):
+                    continue
+                key = _extract_key(f, Y_PATTERN, "y")
+                if key:
+                    mapping.setdefault(key, {})["piv"] = os.path.join(piv_dir, f)
+
+        # Velocity
+        vel_dir = os.path.join(BASE_DIR, scenario_key, "velocity", direction)
+        if os.path.isdir(vel_dir):
+            for f in os.listdir(vel_dir):
+                if not f.lower().endswith((".dat", ".txt")):
+                    continue
+                key = _extract_key(f, Y_PATTERN, "y")
+                if key:
+                    mapping.setdefault(key, {})["velocity"]   = os.path.join(vel_dir, f)
+                    mapping[key]["vel_format"] = "vertical"
+
+    else:  # horizontal
+        # FFID concentration
+        horiz_conc = os.path.join(BASE_DIR, scenario_key, "concentration", direction, "horizontal")
+        if os.path.isdir(horiz_conc):
+            for f in os.listdir(horiz_conc):
+                if not f.lower().endswith((".dat", ".txt")):
+                    continue
+                key = _extract_key(f, Z_PATTERN, "z")
+                if key:
+                    mapping.setdefault(key, {})["ffid"] = os.path.join(horiz_conc, f)
+
+        # Velocity
+        horiz_vel = os.path.join(BASE_DIR, scenario_key, "velocity", direction, "horizontal")
+        if os.path.isdir(horiz_vel):
+            for f in os.listdir(horiz_vel):
+                if not f.lower().endswith((".dat", ".txt")):
+                    continue
+                key = _extract_key(f, Z_PATTERN, "z") or os.path.splitext(f)[0]
+                mapping.setdefault(key, {})["velocity"]   = os.path.join(horiz_vel, f)
+                mapping[key]["vel_format"] = "horizontal"
 
     return mapping
 
 # =====================================================
-# AXIS LOCK
+# AXIS LOCK & ASPECT RATIO
 # =====================================================
 def lock_axes(fig, xvals, yvals):
     fig.update_layout(
         xaxis=dict(range=[float(xvals.min()), float(xvals.max())],
                    autorange=False, fixedrange=True),
         yaxis=dict(range=[float(yvals.min()), float(yvals.max())],
-                   autorange=False, fixedrange=True)
+                   autorange=False, fixedrange=True),
     )
 
-# =====================================================
-# ASPECT RATIO HELPER
-# =====================================================
-def compute_fig_height(xvals, yvals, base_width_px: int = 700, min_h: int = 300, max_h: int = 700) -> int:
-    """
-    Compute figure height so the axes preserve a 1:1 physical aspect ratio,
-    clamped between min_h and max_h pixels.
-    Assumes the plot occupies roughly base_width_px pixels wide (excluding margins).
-    """
+def compute_fig_height(xvals, yvals, base_width_px=700, min_h=280, max_h=700) -> int:
     x_range = float(xvals.max() - xvals.min())
     y_range = float(yvals.max() - yvals.min())
     if x_range < 1e-9:
         return FIG_HEIGHT
-    ratio = y_range / x_range
-    h = int(base_width_px * ratio) + 100  # +100 for margins / title
+    h = int(base_width_px * y_range / x_range) + 100
     return max(min_h, min(h, max_h))
 
 # =====================================================
 # FIELD PLOTTER
 # =====================================================
-def make_field_plot(df: pd.DataFrame, variable: str, title: str) -> go.Figure:
+def make_field_plot(df: pd.DataFrame, variable: str, title: str,
+                    plane: str = "vertical") -> go.Figure:
     colorscale, colorbar_label, is_diverging = get_variable_style(variable)
-    colorbar_kwargs = make_colorbar_kwargs(colorbar_label)
+    colorbar_kw = make_colorbar_kwargs(colorbar_label)
 
     fig = go.Figure()
     nx, ny, nz = df["x"].nunique(), df["y"].nunique(), df["z"].nunique()
+    fig_height = FIG_HEIGHT
 
-    fig_height = FIG_HEIGHT  # default; overridden below when we know axes
+    def _add_trace(xv, yv, zmat, ylabel):
+        nonlocal fig_height
+        zmin_v, zmax_v = float(np.nanmin(zmat)), float(np.nanmax(zmat))
+        cscale_kw = {}
+        if is_diverging:
+            abs_max = max(abs(zmin_v), abs(zmax_v))
+            cscale_kw = dict(zmin=-abs_max, zmax=abs_max)
+        flat = abs(zmax_v - zmin_v) < 1e-12
+        TraceClass = go.Heatmap if flat else go.Contour
+        extra = {} if flat else dict(contours=dict(showlines=False))
+        fig.add_trace(TraceClass(
+            x=xv, y=yv, z=zmat,
+            colorscale=colorscale,
+            colorbar=colorbar_kw,
+            **cscale_kw, **extra,
+        ))
+        lock_axes(fig, np.array(xv), np.array(yv))
+        fig.update_xaxes(title_text="x [mm]", title_font=dict(size=13))
+        fig.update_yaxes(title_text=ylabel,    title_font=dict(size=13))
+        fig_height = compute_fig_height(np.array(xv), np.array(yv))
 
-    # ---------------- x–y ----------------
-    if nx > 1 and ny > 1:
+    # x–y (horizontal plane or single z layer)
+    if nx > 1 and ny > 1 and (plane == "horizontal" or nz == 1):
         grid = df.pivot_table(index="y", columns="x", values=variable, aggfunc="mean")
         xv, yv = grid.columns.to_numpy(float), grid.index.to_numpy(float)
-        zmin, zmax = grid.values.min(), grid.values.max()
+        _add_trace(xv, yv, grid.values, "y [mm]")
+        fig.update_yaxes(scaleanchor="x")
 
-        # For diverging colormaps, center on zero
-        colorscale_kwargs = {}
-        if is_diverging:
-            abs_max = max(abs(zmin), abs(zmax))
-            colorscale_kwargs = dict(zmin=-abs_max, zmax=abs_max)
-
-        flat = abs(zmax - zmin) < 1e-12
-        TraceClass = go.Heatmap if flat else go.Contour
-        extra = {} if flat else dict(contours=dict(showlines=False))
-
-        fig.add_trace(TraceClass(
-            x=xv, y=yv, z=grid.values,
-            colorscale=colorscale,
-            colorbar=colorbar_kwargs,
-            **colorscale_kwargs,
-            **extra,
-        ))
-
-        lock_axes(fig, xv, yv)
-        fig.update_xaxes(title_text="x [mm]", title_font=dict(size=13))
-        fig.update_yaxes(title_text="y [mm]", title_font=dict(size=13), scaleanchor="x")
-        fig_height = compute_fig_height(xv, yv)
-
-    # ---------------- x–z ----------------
+    # x–z (vertical plane)
     elif nx > 1 and nz > 1:
-        use_normalised_z = df["z"].max() > 1000
-        zcol   = "z_H" if use_normalised_z else "z"
-        zlabel = "z / H [–]" if use_normalised_z else "z [mm]"
-
+        use_norm = df["z"].max() > 1000
+        zcol   = "z_H" if use_norm else "z"
+        zlabel = "z / H [–]" if use_norm else "z [mm]"
         grid = df.pivot_table(index=zcol, columns="x", values=variable, aggfunc="mean")
         xv, zv = grid.columns.to_numpy(float), grid.index.to_numpy(float)
-        zmin, zmax = grid.values.min(), grid.values.max()
+        _add_trace(xv, zv, grid.values, zlabel)
 
-        colorscale_kwargs = {}
-        if is_diverging:
-            abs_max = max(abs(zmin), abs(zmax))
-            colorscale_kwargs = dict(zmin=-abs_max, zmax=abs_max)
-
-        flat = abs(zmax - zmin) < 1e-12
-        TraceClass = go.Heatmap if flat else go.Contour
-        extra = {} if flat else dict(contours=dict(showlines=False))
-
-        fig.add_trace(TraceClass(
-            x=xv, y=zv, z=grid.values,
-            colorscale=colorscale,
-            colorbar=colorbar_kwargs,
-            **colorscale_kwargs,
-            **extra,
-        ))
-
-        lock_axes(fig, xv, zv)
-        fig.update_xaxes(title_text="x [mm]", title_font=dict(size=13))
-        fig.update_yaxes(title_text=zlabel, title_font=dict(size=13))
-        fig_height = compute_fig_height(xv, zv)
-
-    # ---------------- fallback ----------------
+    # fallback
     else:
-        fig.add_trace(go.Scatter(
-            x=df["x"], y=df[variable], mode="lines+markers"
-        ))
-        fig.update_xaxes(title_text="x [mm]", title_font=dict(size=13))
+        fig.add_trace(go.Scatter(x=df["x"], y=df[variable], mode="lines+markers"))
+        fig.update_xaxes(title_text="x [mm]",      title_font=dict(size=13))
         fig.update_yaxes(title_text=colorbar_label, title_font=dict(size=13))
 
     fig.update_layout(
@@ -249,16 +297,16 @@ def make_field_plot(df: pd.DataFrame, variable: str, title: str) -> go.Figure:
 # =====================================================
 # ZIP BUILDER
 # =====================================================
-def build_zip_bytes(direction: str, scenario_key: str) -> bytes:
-    fmap = build_file_map(direction, scenario_key)
+def build_zip_bytes(direction: str, scenario_key: str, plane: str) -> bytes:
+    fmap = build_file_map(direction, scenario_key, plane)
     buffer = io.BytesIO()
-
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for ykey, paths in fmap.items():
+        for pos_key, paths in fmap.items():
             for kind, path in paths.items():
+                if kind == "vel_format":
+                    continue
                 arcname = f"{kind}/{os.path.basename(path)}"
                 zf.write(path, arcname=arcname)
-
     buffer.seek(0)
     return buffer.read()
 
@@ -267,15 +315,16 @@ def build_zip_bytes(direction: str, scenario_key: str) -> bytes:
 # =====================================================
 st.set_page_config(page_title="Tunelová měření", layout="wide")
 
-st.title("Tunelová měření - pole průměrných koncentrací a rychlostí")
+st.title("Tunelová měření – pole průměrných koncentrací a rychlostí")
 
 col_text, col_img = st.columns([3, 2], gap="large")
 
 with col_text:
     st.markdown(
         """
-        Databáze obsahuje výsledky měření z aerodynamického tunelu v Novém Kníně Ústavu termomechaniky AV ČR, v.v.i. Jedná se výstupy měření na fyzikálním modelu **Legerovy ulice v Praze**
-        v měřítku **1 : 500**. Měření byla provedena v rámci projektu [Microbus](https://www.microbus.cz/) - TAČR Prostředí pro život 2.
+        Databáze obsahuje výsledky měření z aerodynamického tunelu v Novém Kníně Ústavu termomechaniky AV ČR, v.v.i.
+        Jedná se o výstupy měření na fyzikálním modelu **Legerovy ulice v Praze** v měřítku **1 : 500**.
+        Měření byla provedena v rámci projektu [Microbus](https://www.microbus.cz/) – TAČR Prostředí pro život 2.
 
         **Geometrie a souřadnicový systém**
 
@@ -307,140 +356,188 @@ with col_text:
     )
 
 with col_img:
-    st.image("img/planes.png", use_container_width=True)
+    st.image("img/planes.png", width='stretch')
 
 st.info(
     "Zobrazovaná pole jsou prostorové průměry na základě dostupných tunelových měření. "
     "Aplikace neprovádí interpolaci mimo rozsah dat."
 )
-
-st.info(
-    "Pro stažení vybraných dat ve formátu ZIP použijte tlačítko v dolní části obrazovky."
-)
+st.info("Pro stažení vybraných dat ve formátu ZIP použijte tlačítko v dolní části obrazovky.")
 
 st.divider()
 
-st.markdown("**Vyberte směr větru, scénář, měřicí pozici (*y = ... mm*) a zobrazovanou veličinu:**")
+st.markdown("**Vyberte směr větru, scénář, typ roviny, měřicí pozici a zobrazovanou veličinu:**")
 
-# ---- controls row (direction + scenario)
+# ---- direction ----
 direction = st.radio(
     "Směr větru",
     options=list(DIR_LABELS.keys()),
-    format_func=lambda k: DIR_LABELS.get(k, k),
-    horizontal=True
+    format_func=lambda k: DIR_LABELS[k],
+    horizontal=True,
 )
 
-# Scenario selection:
-# If trees exist only for West, force "Bez stromů" for East.
+# ---- scenario ----
 if direction != "West":
     scenario_label = "Bez stromů"
-    scenario_key = SCENARIOS[scenario_label]
+    scenario_key   = SCENARIOS[scenario_label]
     st.warning("Pro tento směr je dostupný pouze scénář bez stromů.")
 else:
     scenario_label = st.radio(
         "Scénář",
         options=list(SCENARIOS.keys()),
-        horizontal=True
+        horizontal=True,
     )
     scenario_key = SCENARIOS[scenario_label]
 
-# ---- file map for chosen direction+scenario
-fmap = build_file_map(direction, scenario_key)
+# ---- plane type (trees has no horizontal data) ----
+available_planes = ["vertical", "horizontal"] if scenario_key == "notrees" else ["vertical"]
+plane = st.radio(
+    "Typ roviny",
+    options=available_planes,
+    format_func=lambda p: PLANE_LABELS[p],
+    horizontal=True,
+)
+
+# ---- position ----
+fmap = build_file_map(direction, scenario_key, plane)
 keys = sorted(fmap.keys())
 
 if not keys:
     st.error(
-        f"Nebyly nalezeny soubory pro: směr={direction}, scénář={scenario_label}. "
-        f"Čekám data v {BASE_DIR}/{scenario_key}/..."
+        f"Nebyly nalezeny soubory pro: směr={direction}, scénář={scenario_label}, "
+        f"rovina={PLANE_LABELS[plane]}. Čekám data v {BASE_DIR}/{scenario_key}/..."
     )
     st.stop()
 
 pos_key = st.selectbox("Měřicí pozice", options=keys)
+paths   = fmap[pos_key]
 
-# ---- variable selectors
+has_ffid   = "ffid"     in paths
+has_piv    = "piv"      in paths
+has_vel    = "velocity" in paths
+vel_format = paths.get("vel_format", "vertical")
+
+# ---- concentration source (show selector only if both available) ----
+if plane == "vertical" and has_ffid and has_piv:
+    conc_source = st.radio(
+        "Zdroj dat koncentrace",
+        options=["FFID", "PIV"],
+        horizontal=True,
+        help="FFID = bodové měření etanu · PIV = plošná intenzita částic (kalibrovaná)",
+    )
+elif has_piv and not has_ffid:
+    conc_source = "PIV"
+else:
+    conc_source = "FFID"
+
+# ---- variable selectors ----
 colA, colB = st.columns(2, gap="large")
 
 with colA:
     st.subheader("Koncentrace")
+    conc_var_options = ["C", "C_std"] if (conc_source == "FFID" and has_ffid) else ["C"]
+    conc_var_labels  = {"C": "C* [–]", "C_std": "C* std [–]"}
     conc_var = st.selectbox(
         "Proměnná (koncentrace)",
-        options=["C", "C_std"],
-        format_func=lambda v: {"C": "C* [–]", "C_std": "C* std [–]"}.get(v, v),
-        key="conc_var"
+        options=conc_var_options,
+        format_func=lambda v: conc_var_labels.get(v, v),
+        key="conc_var",
     )
 
 with colB:
     st.subheader("Rychlost")
-    vel_var = st.selectbox(
-        "Proměnná (rychlost)",
-        options=["U_Uref", "W_Uref", "TKE_Uref2"],
-        format_func=lambda v: {
+    if plane == "horizontal":
+        vel_var_options = ["U_Uref", "V_Uref", "TKE_Uref2"]
+        vel_var_labels  = {
+            "U_Uref":    "U / U_ref [–]",
+            "V_Uref":    "V / U_ref [–]",
+            "TKE_Uref2": "TKE / U_ref² [–]",
+        }
+    else:
+        vel_var_options = ["U_Uref", "W_Uref", "TKE_Uref2"]
+        vel_var_labels  = {
             "U_Uref":    "U / U_ref [–]",
             "W_Uref":    "W / U_ref [–]",
             "TKE_Uref2": "TKE / U_ref² [–]",
-        }.get(v, v),
-        key="vel_var"
+        }
+    vel_var = st.selectbox(
+        "Proměnná (rychlost)",
+        options=vel_var_options,
+        format_func=lambda v: vel_var_labels.get(v, v),
+        key="vel_var",
     )
 
-# ---- load and plot (conditional for velocity)
-paths = fmap[pos_key]
-has_conc = "concentration" in paths
-has_vel = "velocity" in paths
+# =====================================================
+# LOAD & PLOT
+# =====================================================
+cz_dir = DIR_LABELS[direction]
+fig_c  = go.Figure()
+fig_v  = None
 
-cz_dir = DIR_LABELS.get(direction, direction)
-
-fig_c = go.Figure()
-fig_v = None
-
-if has_conc:
-    dfc = load_tecplot(paths["concentration"], CONC_COLS)
-    fig_c = make_field_plot(
-        dfc,
-        conc_var,
-        f"{cz_dir} / {scenario_label} – koncentrace ({pos_key})"
-    )
+# --- concentration ---
+if conc_source == "PIV" and has_piv:
+    try:
+        dfc = load_tecplot_block(paths["piv"], CONC_COLS_PIV)
+        fig_c = make_field_plot(
+            dfc, conc_var,
+            f"{cz_dir} / {scenario_label} – PIV koncentrace ({pos_key})",
+            plane=plane,
+        )
+    except Exception as e:
+        st.error(f"Chyba při načítání PIV dat: {e}")
+elif has_ffid:
+    try:
+        dfc = load_tecplot_point(paths["ffid"], CONC_COLS_FFID)
+        fig_c = make_field_plot(
+            dfc, conc_var,
+            f"{cz_dir} / {scenario_label} – FFID koncentrace ({pos_key})",
+            plane=plane,
+        )
+    except Exception as e:
+        st.error(f"Chyba při načítání FFID dat: {e}")
 else:
-    st.error("Pro vybranou pozici chybí soubor koncentrace.")
+    st.warning("Pro vybranou pozici nejsou k dispozici data koncentrace.")
 
+# --- velocity ---
 if has_vel:
-    dfv = load_tecplot(paths["velocity"], VEL_COLS)
-    fig_v = make_field_plot(
-        dfv,
-        vel_var,
-        f"{cz_dir} / {scenario_label} – rychlost ({pos_key})"
-    )
+    try:
+        vel_cols = VEL_COLS_HORIZONTAL if vel_format == "horizontal" else VEL_COLS_VERTICAL
+        dfv = load_tecplot_point(paths["velocity"], vel_cols)
+        fig_v = make_field_plot(
+            dfv, vel_var,
+            f"{cz_dir} / {scenario_label} – rychlost ({pos_key})",
+            plane=plane,
+        )
+    except Exception as e:
+        st.error(f"Chyba při načítání dat rychlosti: {e}")
 
-# ---- unify figure heights
+# ---- unify heights ----
 if fig_v is not None:
-    unified_height = max(
+    unified_h = max(
         fig_c.layout.height or FIG_HEIGHT,
         fig_v.layout.height or FIG_HEIGHT,
     )
-    fig_c.update_layout(height=unified_height)
-    fig_v.update_layout(height=unified_height)
+    fig_c.update_layout(height=unified_h)
+    fig_v.update_layout(height=unified_h)
 
-# ---- plots
+# ---- render ----
 col1, col2 = st.columns(2, gap="large")
 with col1:
     st.plotly_chart(fig_c)
-
 with col2:
     if fig_v is None:
-        st.warning("Pro tento scénář nejsou k dispozici data rychlosti.")
+        st.warning("Pro tento scénář/pozici nejsou k dispozici data rychlosti.")
     else:
         st.plotly_chart(fig_v)
 
 st.divider()
 
-# ---- download section
+# ---- download ----
 st.success("Data ke stažení zde: ⬇️")
-
-zip_label = f"Stáhnout data - {cz_dir} / {scenario_label} (ZIP)"
-zip_bytes = build_zip_bytes(direction, scenario_key)
-
+zip_bytes = build_zip_bytes(direction, scenario_key, plane)
 st.download_button(
-    label=zip_label,
+    label=f"Stáhnout data – {cz_dir} / {scenario_label} / {PLANE_LABELS[plane]} (ZIP)",
     data=zip_bytes,
-    file_name=f"{direction}_{scenario_key}_all_data.zip",
-    mime="application/zip"
+    file_name=f"{direction}_{scenario_key}_{plane}_data.zip",
+    mime="application/zip",
 )
