@@ -359,6 +359,11 @@ with col_text:
 
 with col_img:
     st.image("img/planes.png", width='stretch')
+    st.markdown("Schéma měřicích rovin v modelu Legerovy ulice. "
+                "Červeně: liniový zdroj polutantu, "
+                "modře: vertikální roviny (x–z) s polohou y [mm], "
+                "zeleně: horizontální rovina (x–y). "
+                "Šipky označují simulované směry větru.")
 
 st.info(
     "Zobrazovaná pole jsou prostorové průměry na základě dostupných tunelových měření. "
