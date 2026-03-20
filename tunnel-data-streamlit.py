@@ -366,86 +366,83 @@ st.info("Pro stažení vybraných dat ve formátu ZIP použijte tlačítko v dol
 
 st.divider()
 
-st.markdown("**Vyberte směr větru, scénář, typ roviny, měřicí pozici a zobrazovanou veličinu:**")
+# =====================================================
+# SIDEBAR – controls
+# =====================================================
+with st.sidebar:
+    st.header("Nastavení zobrazení")
 
-# ---- direction ----
-direction = st.radio(
-    "Směr větru",
-    options=list(DIR_LABELS.keys()),
-    format_func=lambda k: DIR_LABELS[k],
-    horizontal=True,
-)
-
-# ---- scenario ----
-if direction != "West":
-    scenario_label = "Bez stromů"
-    scenario_key   = SCENARIOS[scenario_label]
-    st.warning("Pro tento směr je dostupný pouze scénář bez stromů.")
-else:
-    scenario_label = st.radio(
-        "Scénář",
-        options=list(SCENARIOS.keys()),
-        horizontal=True,
+    # ---- direction ----
+    direction = st.radio(
+        "Směr větru",
+        options=list(DIR_LABELS.keys()),
+        format_func=lambda k: DIR_LABELS[k],
     )
-    scenario_key = SCENARIOS[scenario_label]
 
-# ---- plane type (trees has no horizontal data) ----
-available_planes = ["vertical", "horizontal"] if scenario_key == "notrees" else ["vertical"]
-plane = st.radio(
-    "Typ roviny",
-    options=available_planes,
-    format_func=lambda p: PLANE_LABELS[p],
-    horizontal=True,
-)
+    # ---- scenario ----
+    if direction != "West":
+        scenario_label = "Bez stromů"
+        scenario_key   = SCENARIOS[scenario_label]
+        st.warning("Pro tento směr je dostupný pouze scénář bez stromů.")
+    else:
+        scenario_label = st.radio(
+            "Scénář",
+            options=list(SCENARIOS.keys()),
+        )
+        scenario_key = SCENARIOS[scenario_label]
 
-# ---- position ----
-fmap = build_file_map(direction, scenario_key, plane)
-keys = sorted(fmap.keys())
-
-if not keys:
-    st.error(
-        f"Nebyly nalezeny soubory pro: směr={direction}, scénář={scenario_label}, "
-        f"rovina={PLANE_LABELS[plane]}. Čekám data v {BASE_DIR}/{scenario_key}/..."
+    # ---- plane type ----
+    available_planes = ["vertical", "horizontal"] if scenario_key == "notrees" else ["vertical"]
+    plane = st.radio(
+        "Typ roviny",
+        options=available_planes,
+        format_func=lambda p: PLANE_LABELS[p],
     )
-    st.stop()
 
-pos_key = st.selectbox("Měřicí pozice", options=keys)
-paths   = fmap[pos_key]
+    # ---- position ----
+    fmap = build_file_map(direction, scenario_key, plane)
+    keys = sorted(fmap.keys())
 
-has_ffid   = "ffid"     in paths
-has_piv    = "piv"      in paths
-has_vel    = "velocity" in paths
-vel_format = paths.get("vel_format", "vertical")
+    if not keys:
+        st.error(
+            f"Nebyly nalezeny soubory pro: směr={direction}, scénář={scenario_label}, "
+            f"rovina={PLANE_LABELS[plane]}."
+        )
+        st.stop()
 
-# ---- concentration source (show selector only if both available) ----
-if plane == "vertical" and has_ffid and has_piv:
-    conc_source = st.radio(
-        "Zdroj dat koncentrace",
-        options=["FFID", "PIV"],
-        horizontal=True,
-        help="FFID = bodové měření etanu · PIV = plošná intenzita částic (kalibrovaná)",
-    )
-elif has_piv and not has_ffid:
-    conc_source = "PIV"
-else:
-    conc_source = "FFID"
+    pos_key = st.selectbox("Měřicí pozice", options=keys)
+    paths   = fmap[pos_key]
 
-# ---- variable selectors ----
-colA, colB = st.columns(2, gap="large")
+    has_ffid   = "ffid"     in paths
+    has_piv    = "piv"      in paths
+    has_vel    = "velocity" in paths
+    vel_format = paths.get("vel_format", "vertical")
 
-with colA:
-    st.subheader("Koncentrace")
+    st.divider()
+
+    # ---- concentration source ----
+    if plane == "vertical" and has_ffid and has_piv:
+        conc_source = st.radio(
+            "Zdroj dat koncentrace",
+            options=["FFID", "PIV"],
+            help="FFID = bodové měření etanu · PIV = plošná intenzita částic (kalibrovaná)",
+        )
+    elif has_piv and not has_ffid:
+        conc_source = "PIV"
+    else:
+        conc_source = "FFID"
+
+    # ---- concentration variable ----
     conc_var_options = ["C", "C_std"] if (conc_source == "FFID" and has_ffid) else ["C"]
     conc_var_labels  = {"C": "C* [–]", "C_std": "C* std [–]"}
     conc_var = st.selectbox(
-        "Proměnná (koncentrace)",
+        "Proměnná – koncentrace",
         options=conc_var_options,
         format_func=lambda v: conc_var_labels.get(v, v),
         key="conc_var",
     )
 
-with colB:
-    st.subheader("Rychlost")
+    # ---- velocity variable ----
     if plane == "horizontal":
         vel_var_options = ["U_Uref", "V_Uref", "TKE_Uref2"]
         vel_var_labels  = {
@@ -461,10 +458,23 @@ with colB:
             "TKE_Uref2": "TKE / U_ref² [–]",
         }
     vel_var = st.selectbox(
-        "Proměnná (rychlost)",
+        "Proměnná – rychlost",
         options=vel_var_options,
         format_func=lambda v: vel_var_labels.get(v, v),
         key="vel_var",
+    )
+
+    st.divider()
+
+    # ---- download (in sidebar for easy access) ----
+    zip_bytes = build_zip_bytes(direction, scenario_key, plane)
+    cz_dir_sidebar = DIR_LABELS[direction]
+    st.download_button(
+        label="⬇️ Stáhnout data (ZIP)",
+        data=zip_bytes,
+        file_name=f"{direction}_{scenario_key}_{plane}_data.zip",
+        mime="application/zip",
+        use_container_width=True,
     )
 
 # =====================================================
@@ -496,7 +506,7 @@ elif has_ffid:
     except Exception as e:
         st.error(f"Chyba při načítání FFID dat: {e}")
 else:
-    st.warning("Pro vybranou pozici nejsou k dispozici data koncentrace.")
+    st.warning("Pro tento scénář/pozici nejsou k dispozici data koncentrace.")
 
 # --- velocity ---
 if has_vel:
@@ -523,21 +533,11 @@ if fig_v is not None:
 # ---- render ----
 col1, col2 = st.columns(2, gap="large")
 with col1:
+    st.subheader("Koncentrace")
     st.plotly_chart(fig_c)
 with col2:
+    st.subheader("Rychlost")
     if fig_v is None:
         st.warning("Pro tento scénář/pozici nejsou k dispozici data rychlosti.")
     else:
         st.plotly_chart(fig_v)
-
-st.divider()
-
-# ---- download ----
-st.success("Data ke stažení zde: ⬇️")
-zip_bytes = build_zip_bytes(direction, scenario_key, plane)
-st.download_button(
-    label=f"Stáhnout data – {cz_dir} / {scenario_label} / {PLANE_LABELS[plane]} (ZIP)",
-    data=zip_bytes,
-    file_name=f"{direction}_{scenario_key}_{plane}_data.zip",
-    mime="application/zip",
-)
