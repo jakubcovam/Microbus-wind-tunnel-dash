@@ -322,21 +322,23 @@ col_text, col_img = st.columns([3, 2], gap="large")
 with col_text:
     st.markdown(
         """
-        Databáze obsahuje výsledky měření z aerodynamického tunelu v Novém Kníně Ústavu termomechaniky AV ČR, v.v.i.
+        Databáze obsahuje výsledky měření z aerodynamického tunelu v Novém Kníně 
+        [Ústavu termomechaniky AV ČR, v. v. i.](https://www.it.cas.cz/d1/l013/)
         Jedná se o výstupy měření na fyzikálním modelu **Legerovy ulice v Praze** v měřítku **1 : 500**.
-        Měření byla provedena v rámci projektu [Microbus](https://www.microbus.cz/) – TAČR Prostředí pro život 2.
+        Měření byla provedena v rámci projektu [Microbus](https://www.microbus.cz/) financováném 
+        Technologickou agenturou ČR v rámci programu Prostředí pro život 2 v letech 2025–2027.
 
         **Geometrie a souřadnicový systém**
 
         Souřadnicový systém (x, y, z) je vztažen k modelu ulice. Vertikální roviny (x–z) jsou kolmé na osu zdroje (y),
-        horizontální rovina (x–y) byla měřena ve výšce z = 8 mm. Všechny rozměry jsou v mm v tunelovém měřítku.
+        horizontální rovina (x–y) byla měřena ve výšce z = 7,5 mm nebo z = 8 mm. Všechny rozměry jsou v mm v tunelovém měřítku.
         Bezrozměrné souřadnice x/B, y/B, x/H, y/H jsou rovněž součástí datových souborů,
         kde B = H je charakteristická šířka ulice, resp. výška budov.
 
         **Měřicí techniky**
 
         - **PIV** (Particle Image Velocimetry) – plošné časově rozlišené měření 2D vektorů rychlostí a koncentrací
-          pasivního polutantu (aerosolové částice < 2,5 µm) ve všech rovinách
+          pasivního polutantu (aerosolové částice < 2,5 µm)
         - **FFID** (Fast Flame Ionization Detector) – bodové měření koncentrací etanu
 
         **Normování veličin**
@@ -348,7 +350,7 @@ with col_text:
 
         **Formát dat**
 
-        Soubory jsou v ASCII formátu (přípona `.dat`, formát Tecplot). Lze je otevřít např. v **Paraview**.
+        Soubory jsou v ASCII formátu (přípona `.dat`, formát Tecplot).
         Hlavička `VARIABLES` v každém souboru uvádí názvy sloupců. Data jsou členěna podle směru větru
         (`West`, `East`) a typu veličiny (`concentration`, `velocity`).
         Název souboru kóduje pozici měřené roviny (např. `y = -115 mm`).
@@ -362,7 +364,7 @@ st.info(
     "Zobrazovaná pole jsou prostorové průměry na základě dostupných tunelových měření. "
     "Aplikace neprovádí interpolaci mimo rozsah dat."
 )
-st.info("Pro stažení vybraných dat ve formátu ZIP použijte tlačítko v dolní části obrazovky.")
+st.info("Pro stažení dat zvoleného nastavení ve formátu ZIP použijte tlačítko v levé části obrazovky.")
 
 st.divider()
 
