@@ -269,11 +269,45 @@ st.set_page_config(page_title="Tunelová měření", layout="wide")
 
 st.title("Tunelová měření - pole průměrných koncentrací a rychlostí")
 
-st.markdown(
-    """
-    Text text text ... (popis experimentu a dat).
-    """
-)
+col_text, col_img = st.columns([3, 2], gap="large")
+
+with col_text:
+    st.markdown(
+        """
+        Databáze obsahuje výsledky měření z aerodynamického tunelu v Novém Kníně Ústavu termomechaniky AV ČR, v.v.i. Jedná se výstupy měření na fyzikálním modelu **Legerovy ulice v Praze**
+        v měřítku **1 : 500**. Měření byla provedena v rámci projektu [Microbus](https://www.microbus.cz/) - TAČR Prostředí pro život 2.
+
+        **Geometrie a souřadnicový systém**
+
+        Souřadnicový systém (x, y, z) je vztažen k modelu ulice. Vertikální roviny (x–z) jsou kolmé na osu zdroje (y),
+        horizontální rovina (x–y) byla měřena ve výšce z = 8 mm. Všechny rozměry jsou v mm v tunelovém měřítku.
+        Bezrozměrné souřadnice x/B, y/B, x/H, y/H jsou rovněž součástí datových souborů,
+        kde B = H je charakteristická šířka ulice, resp. výška budov.
+
+        **Měřicí techniky**
+
+        - **PIV** (Particle Image Velocimetry) – plošné časově rozlišené měření 2D vektorů rychlostí a koncentrací
+          pasivního polutantu (aerosolové částice < 2,5 µm) ve všech rovinách
+        - **FFID** (Fast Flame Ionization Detector) – bodové měření koncentrací etanu
+
+        **Normování veličin**
+
+        Složky rychlosti a jejich statistické momenty jsou normovány referenční rychlostí volného proudu
+        U_ref = 6 m/s. Koncentrace polutantu jsou prezentovány v bezrozměrné formě C* = C·B·U_ref·L / Q,
+        kde C je změřená koncentrace etanu [ppm], B = 0,046 m je průměrná šířka kaňonu, L = 1 m je délka zdroje
+        a Q = 18 ml/s je objemový průtok etanu za standardních podmínek.
+
+        **Formát dat**
+
+        Soubory jsou v ASCII formátu (přípona `.dat`, formát Tecplot). Lze je otevřít např. v **Paraview**.
+        Hlavička `VARIABLES` v každém souboru uvádí názvy sloupců. Data jsou členěna podle směru větru
+        (`West`, `East`) a typu veličiny (`concentration`, `velocity`).
+        Název souboru kóduje pozici měřené roviny (např. `y = -115 mm`).
+        """
+    )
+
+with col_img:
+    st.image("img/planes.png", use_container_width=True)
 
 st.info(
     "Zobrazovaná pole jsou prostorové průměry na základě dostupných tunelových měření. "
