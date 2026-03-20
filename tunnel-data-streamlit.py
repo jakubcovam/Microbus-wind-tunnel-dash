@@ -50,6 +50,31 @@ DIR_LABELS = {
 }
 
 # =====================================================
+# COLORSCALE & COLORBAR LABEL DEFINITIONS
+# =====================================================
+# Maps variable name → (colorscale, colorbar label, diverging)
+VARIABLE_DISPLAY = {
+    "C":         ("Viridis",  "C* [–]",        False),
+    "C_std":     ("Viridis",  "C* std [–]",    False),
+    "U_Uref":    ("RdBu_r",   "U / U_ref [–]", True),
+    "W_Uref":    ("RdBu_r",   "W / U_ref [–]", True),
+    "TKE_Uref2": ("Plasma",   "TKE / U_ref² [–]", False),
+}
+
+def get_variable_style(variable: str) -> tuple[str, str, bool]:
+    """Return (colorscale, colorbar_label, is_diverging) for a variable."""
+    return VARIABLE_DISPLAY.get(variable, ("Viridis", variable, False))
+
+
+def make_colorbar_kwargs(label: str) -> dict:
+    return dict(
+        title=dict(text=label, side="right", font=dict(size=13)),
+        tickfont=dict(size=11),
+        thickness=16,
+        len=0.9,
+    )
+
+# =====================================================
 # TEC PLOT PARSER
 # =====================================================
 @st.cache_data(show_spinner=False)
@@ -115,80 +140,109 @@ def lock_axes(fig, xvals, yvals):
     )
 
 # =====================================================
+# ASPECT RATIO HELPER
+# =====================================================
+def compute_fig_height(xvals, yvals, base_width_px: int = 700, min_h: int = 300, max_h: int = 700) -> int:
+    """
+    Compute figure height so the axes preserve a 1:1 physical aspect ratio,
+    clamped between min_h and max_h pixels.
+    Assumes the plot occupies roughly base_width_px pixels wide (excluding margins).
+    """
+    x_range = float(xvals.max() - xvals.min())
+    y_range = float(yvals.max() - yvals.min())
+    if x_range < 1e-9:
+        return FIG_HEIGHT
+    ratio = y_range / x_range
+    h = int(base_width_px * ratio) + 100  # +100 for margins / title
+    return max(min_h, min(h, max_h))
+
+# =====================================================
 # FIELD PLOTTER
 # =====================================================
 def make_field_plot(df: pd.DataFrame, variable: str, title: str) -> go.Figure:
-    def choose_colormap(variable):
-        # everything currently RdBu_r
-        return "RdBu_r"
+    colorscale, colorbar_label, is_diverging = get_variable_style(variable)
+    colorbar_kwargs = make_colorbar_kwargs(colorbar_label)
 
     fig = go.Figure()
     nx, ny, nz = df["x"].nunique(), df["y"].nunique(), df["z"].nunique()
+
+    fig_height = FIG_HEIGHT  # default; overridden below when we know axes
 
     # ---------------- x–y ----------------
     if nx > 1 and ny > 1:
         grid = df.pivot_table(index="y", columns="x", values=variable, aggfunc="mean")
         xv, yv = grid.columns.to_numpy(float), grid.index.to_numpy(float)
+        zmin, zmax = grid.values.min(), grid.values.max()
 
-        if abs(grid.values.max() - grid.values.min()) < 1e-12:
-            fig.add_trace(go.Heatmap(
-                x=xv, y=yv, z=grid.values,
-                colorscale=choose_colormap(variable),
-                colorbar=dict(title=variable)
-            ))
-        else:
-            fig.add_trace(go.Contour(
-                x=xv, y=yv, z=grid.values,
-                colorscale=choose_colormap(variable),
-                contours=dict(showlines=False),
-                colorbar=dict(title=variable)
-            ))
+        # For diverging colormaps, center on zero
+        colorscale_kwargs = {}
+        if is_diverging:
+            abs_max = max(abs(zmin), abs(zmax))
+            colorscale_kwargs = dict(zmin=-abs_max, zmax=abs_max)
+
+        flat = abs(zmax - zmin) < 1e-12
+        TraceClass = go.Heatmap if flat else go.Contour
+        extra = {} if flat else dict(contours=dict(showlines=False))
+
+        fig.add_trace(TraceClass(
+            x=xv, y=yv, z=grid.values,
+            colorscale=colorscale,
+            colorbar=colorbar_kwargs,
+            **colorscale_kwargs,
+            **extra,
+        ))
 
         lock_axes(fig, xv, yv)
-        fig.update_xaxes(title="x [mm]")
-        fig.update_yaxes(title="y [mm]", scaleanchor="x")
+        fig.update_xaxes(title_text="x [mm]", title_font=dict(size=13))
+        fig.update_yaxes(title_text="y [mm]", title_font=dict(size=13), scaleanchor="x")
+        fig_height = compute_fig_height(xv, yv)
 
     # ---------------- x–z ----------------
     elif nx > 1 and nz > 1:
-        zcol, zlabel = ("z", "z [mm]")
-        if df["z"].max() > 1000:
-            zcol, zlabel = ("z_H", "z/H")
+        use_normalised_z = df["z"].max() > 1000
+        zcol   = "z_H" if use_normalised_z else "z"
+        zlabel = "z / H [–]" if use_normalised_z else "z [mm]"
 
         grid = df.pivot_table(index=zcol, columns="x", values=variable, aggfunc="mean")
         xv, zv = grid.columns.to_numpy(float), grid.index.to_numpy(float)
+        zmin, zmax = grid.values.min(), grid.values.max()
 
-        if abs(grid.values.max() - grid.values.min()) < 1e-12:
-            fig.add_trace(go.Heatmap(
-                x=xv, y=zv, z=grid.values,
-                colorscale=choose_colormap(variable),
-                colorbar=dict(title=variable)
-            ))
-        else:
-            fig.add_trace(go.Contour(
-                x=xv, y=zv, z=grid.values,
-                colorscale=choose_colormap(variable),
-                contours=dict(showlines=False),
-                colorbar=dict(title=variable)
-            ))
+        colorscale_kwargs = {}
+        if is_diverging:
+            abs_max = max(abs(zmin), abs(zmax))
+            colorscale_kwargs = dict(zmin=-abs_max, zmax=abs_max)
+
+        flat = abs(zmax - zmin) < 1e-12
+        TraceClass = go.Heatmap if flat else go.Contour
+        extra = {} if flat else dict(contours=dict(showlines=False))
+
+        fig.add_trace(TraceClass(
+            x=xv, y=zv, z=grid.values,
+            colorscale=colorscale,
+            colorbar=colorbar_kwargs,
+            **colorscale_kwargs,
+            **extra,
+        ))
 
         lock_axes(fig, xv, zv)
-        fig.update_xaxes(title="x [mm]")
-        fig.update_yaxes(title=zlabel)
+        fig.update_xaxes(title_text="x [mm]", title_font=dict(size=13))
+        fig.update_yaxes(title_text=zlabel, title_font=dict(size=13))
+        fig_height = compute_fig_height(xv, zv)
 
     # ---------------- fallback ----------------
     else:
         fig.add_trace(go.Scatter(
             x=df["x"], y=df[variable], mode="lines+markers"
         ))
-        fig.update_xaxes(title="x [mm]")
-        fig.update_yaxes(title=variable)
+        fig.update_xaxes(title_text="x [mm]", title_font=dict(size=13))
+        fig.update_yaxes(title_text=colorbar_label, title_font=dict(size=13))
 
     fig.update_layout(
-        title=title,
-        height=FIG_HEIGHT,
+        title=dict(text=title, font=dict(size=14)),
+        height=fig_height,
         template="plotly_white",
-        margin=dict(l=60, r=20, t=50, b=50),
-        autosize=False
+        margin=dict(l=70, r=20, t=55, b=60),
+        autosize=True,
     )
     return fig
 
@@ -277,7 +331,7 @@ with colA:
     conc_var = st.selectbox(
         "Proměnná (koncentrace)",
         options=["C", "C_std"],
-        format_func=lambda v: {"C": "C*", "C_std": "C* std"}.get(v, v),
+        format_func=lambda v: {"C": "C* [–]", "C_std": "C* std [–]"}.get(v, v),
         key="conc_var"
     )
 
@@ -286,7 +340,11 @@ with colB:
     vel_var = st.selectbox(
         "Proměnná (rychlost)",
         options=["U_Uref", "W_Uref", "TKE_Uref2"],
-        format_func=lambda v: {"U_Uref": "U/Uref", "W_Uref": "W/Uref", "TKE_Uref2": "TKE/Uref²"}.get(v, v),
+        format_func=lambda v: {
+            "U_Uref":    "U / U_ref [–]",
+            "W_Uref":    "W / U_ref [–]",
+            "TKE_Uref2": "TKE / U_ref² [–]",
+        }.get(v, v),
         key="vel_var"
     )
 
@@ -305,7 +363,7 @@ if has_conc:
     fig_c = make_field_plot(
         dfc,
         conc_var,
-        f"{cz_dir} / {scenario_label} - koncentrace ({pos_key})"
+        f"{cz_dir} / {scenario_label} – koncentrace ({pos_key})"
     )
 else:
     st.error("Pro vybranou pozici chybí soubor koncentrace.")
@@ -315,19 +373,28 @@ if has_vel:
     fig_v = make_field_plot(
         dfv,
         vel_var,
-        f"{cz_dir} / {scenario_label} - rychlost ({pos_key})"
+        f"{cz_dir} / {scenario_label} – rychlost ({pos_key})"
     )
+
+# ---- unify figure heights
+if fig_v is not None:
+    unified_height = max(
+        fig_c.layout.height or FIG_HEIGHT,
+        fig_v.layout.height or FIG_HEIGHT,
+    )
+    fig_c.update_layout(height=unified_height)
+    fig_v.update_layout(height=unified_height)
 
 # ---- plots
 col1, col2 = st.columns(2, gap="large")
 with col1:
-    st.plotly_chart(fig_c, width="stretch")
+    st.plotly_chart(fig_c)
 
 with col2:
     if fig_v is None:
         st.warning("Pro tento scénář nejsou k dispozici data rychlosti.")
     else:
-        st.plotly_chart(fig_v, width="stretch")
+        st.plotly_chart(fig_v)
 
 st.divider()
 
