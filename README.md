@@ -22,7 +22,7 @@ Interactive Python **Dash web application**  for visualization and download of *
 
 ## 📸 Screenshot
 
-![Dash application screenshot](microbus-tunel-dash.png)
+![Streamlit application screenshot](screenshot/microbus-tunel-streamlit.png)
 
 ---
 
