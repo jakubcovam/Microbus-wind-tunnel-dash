@@ -1,0 +1,33 @@
+cff-version: 1.0.0
+title: "Wind Tunnel Field Viewer"
+abstract: "An interactive Streamlit web application for visualization and 
+  download of mean concentration and velocity fields from wind-tunnel 
+  experiments."
+version: 1.0.0
+date-released: 2026-04-17
+type: software
+license: MIT
+url: "https://microbus-wind-tunnel.streamlit.app/"
+repository-code: "https://github.com/jakubcovam/Microbus-wind-tunnel-dash"
+
+authors:
+  - family-names: Jakubcová
+    given-names: Michala
+    affiliation: "Institute of Thermomechanics of the Czech Academy of Sciences"
+    orcid: "http://www.orcid.org/0000-0002-8968-4570"
+
+keywords:
+  - wind tunnel
+  - streamlit
+  - fluid mechanics
+  - concentration field
+  - velocity field
+
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.19628757"
+    description: "Zenodo DOI - fill in after Zenodo release"
+
+funding:
+  - name: "Technologická agentura České republiky (TA ČR)"
+    grant: "SQ01010181"
