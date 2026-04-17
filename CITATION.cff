@@ -16,6 +16,16 @@ authors:
     affiliation: "Institute of Thermomechanics of the Czech Academy of Sciences"
     orcid: "http://www.orcid.org/0000-0002-8968-4570"
 
+  - family-names: Chaloupecká
+    given-names: Hana
+    affiliation: "Institute of Thermomechanics of the Czech Academy of Sciences"
+    orcid: "http://www.orcid.org/0000-0001-7588-0645"
+
+  - family-names: Nosek
+    given-names: Štěpán
+    affiliation: "Institute of Thermomechanics of the Czech Academy of Sciences"
+    orcid: "http://www.orcid.org/0000-0001-8472-1873"
+
 keywords:
   - wind tunnel
   - streamlit
